@@ -1,9 +1,18 @@
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useState, useEffect } from 'react';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/core/context/AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect } from '@react-navigation/native';
 import { API_URL } from '@/src/config';
 
 interface CartItem {
@@ -13,6 +22,11 @@ interface CartItem {
   quantity: number;
   restaurantId: string;
   restaurantName: string;
+  description?: string;
+  category?: string;
+  isAvailable?: boolean;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export default function CartScreen() {
@@ -21,27 +35,47 @@ export default function CartScreen() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
-  useEffect(() => {
-    loadCartItems();
-  }, []);
-
   const loadCartItems = async () => {
     try {
+      console.log('CART - Starting to load cart items');
       const cartData = await AsyncStorage.getItem('cartItems');
+      console.log('CART - Retrieved cart data:', cartData);
+      
       if (cartData) {
-        setCartItems(JSON.parse(cartData));
+        const items = JSON.parse(cartData);
+        console.log('CART - Parsed cart items:', items);
+        setCartItems(items);
       } else {
+        console.log('CART - No cart data found, setting empty array');
         setCartItems([]);
       }
     } catch (error) {
-      console.error('Error loading cart:', error);
+      console.error('CART - Error loading cart:', error);
       setCartItems([]);
       await AsyncStorage.removeItem('cartItems');
     }
   };
 
+  // Load cart items when component mounts
+  useEffect(() => {
+    console.log('CART - Component mounted, loading cart items');
+    loadCartItems();
+  }, []);
+
+  // Reload cart items when screen is focused
+  useFocusEffect(
+    useCallback(() => {
+      console.log('CART - Screen focused, loading cart items');
+      loadCartItems();
+      return () => {
+        console.log('CART - Screen unfocused');
+      };
+    }, [])
+  );
+
   const updateQuantity = async (itemId: string, change: number) => {
     try {
+      console.log('CART - Updating quantity for item:', itemId, 'change:', change);
       const updatedItems = cartItems.map(item => {
         if (item.id === itemId) {
           const newQuantity = item.quantity + change;
@@ -51,10 +85,11 @@ export default function CartScreen() {
         return item;
       }).filter(Boolean) as CartItem[];
 
+      console.log('CART - Saving updated items:', updatedItems);
       await AsyncStorage.setItem('cartItems', JSON.stringify(updatedItems));
       setCartItems(updatedItems);
     } catch (error) {
-      console.error('Failed to update quantity:', error);
+      console.error('CART - Failed to update quantity:', error);
       Alert.alert('Error', 'Failed to update item quantity');
     }
   };
@@ -63,78 +98,36 @@ export default function CartScreen() {
     return cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
   };
 
-  const handlePlaceOrder = async () => {
+  const handlePlaceOrder = () => {
     if (!user) {
       Alert.alert('Error', 'Please log in to place an order');
       return;
     }
-
+  
     if (cartItems.length === 0) {
       Alert.alert('Error', 'Your cart is empty');
       return;
     }
-
-    setIsLoading(true);
-    try {
-      // Create order data
-      const order = {
-        id: Math.random().toString(36).substring(7),
-        userId: user.id,
-        customerName: user.fullName || 'Customer',
-        restaurantId: cartItems[0].restaurantId,
-        restaurantName: cartItems[0].restaurantName,
-        status: 'PENDING' as const,
-        totalAmount: getTotal(),
-        orderItems: cartItems.map(item => ({
-          id: Math.random().toString(36).substring(7),
-          menuItemId: item.id,
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price
-        })),
-        createdAt: Date.now()
-      };
   
-      // Send order to server
-      const orderResponse = await fetch(`${API_URL}/orders/${user.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ orders: [order] }),
-      });
-  
-      if (!orderResponse.ok) {
-        throw new Error('Failed to create order');
-      }
-  
-      // Clear cart completely
-      await AsyncStorage.removeItem('cartItems');
-      setCartItems([]);
-  
-      // Create initial message
-      await fetch(`${API_URL}/messages/${order.id}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          id: Math.random().toString(36).slice(2),
-          content: `New Order:\n${cartItems.map(item =>
-            `${item.quantity}x ${item.name}`
-          ).join('\n')}\n\nTotal: $${getTotal().toFixed(2)}`,
-          senderId: user.id,
-          isFromUser: true,
-          timestamp: Date.now()
-        })
-      });
-  
-      router.push('/orders');
-    } catch (error) {
-      console.error('Failed to place order:', error);
-      Alert.alert('Error', 'Failed to place order. Please try again.');
-    }
+    router.push("/(auth)/checkout");  // Update this line to include the full path
   };
+  // Continue from Part 1...
+
+  if (!user) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centerContent}>
+          <Text>Please log in to view your cart</Text>
+          <TouchableOpacity
+            style={styles.loginButton}
+            onPress={() => router.push('/login')}
+          >
+            <Text style={styles.loginButtonText}>Login</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (cartItems.length === 0) {
     return (
@@ -216,6 +209,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
+  centerContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
   header: {
     padding: 20,
     borderBottomWidth: 1,
@@ -226,6 +225,18 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#2D9A63',
   },
+  loginButton: {
+    marginTop: 16,
+    backgroundColor: '#2D9A63',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  loginButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -234,7 +245,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 16,
-    color: '#666',
+    color: '#666666',
     marginBottom: 20,
   },
   browseButton: {
@@ -265,11 +276,11 @@ const styles = StyleSheet.create({
   itemName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: '#333333',
   },
   itemRestaurant: {
     fontSize: 14,
-    color: '#666',
+    color: '#666666',
     marginTop: 2,
   },
   itemPrice: {
@@ -306,6 +317,7 @@ const styles = StyleSheet.create({
     padding: 16,
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',
+    backgroundColor: '#FFFFFF',
   },
   totalContainer: {
     flexDirection: 'row',
@@ -316,7 +328,7 @@ const styles = StyleSheet.create({
   totalLabel: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#333',
+    color: '#333333',
   },
   totalAmount: {
     fontSize: 24,
@@ -326,7 +338,7 @@ const styles = StyleSheet.create({
   placeOrderButton: {
     backgroundColor: '#2D9A63',
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: 'center',
   },
   disabledButton: {

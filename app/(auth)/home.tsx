@@ -34,15 +34,15 @@ export default function Home() {
     try {
       console.log("Starting to load restaurants");
       if (showLoadingIndicator) setIsLoading(true);
-  
+
       console.log("Making fetch request to:", `${API_URL}/restaurants`);
       const response = await fetch(`${API_URL}/restaurants`);
       console.log("Got response:", response.status);
-      
+
       if (!response.ok) {
         throw new Error('Failed to fetch restaurants');
       }
-  
+
       const data = await response.json();
       console.log("Fetched restaurants:", data);
       setRestaurants(data);
@@ -73,7 +73,7 @@ export default function Home() {
       Alert.alert('Restaurant Closed', 'This restaurant is currently not accepting orders.');
       return;
     }
-    
+
     router.push({
       pathname: "/restaurant/[id]",
       params: { id: restaurant.id }
@@ -126,6 +126,11 @@ export default function Home() {
                 }
                 style={styles.restaurantImage}
                 resizeMode="cover"
+                onError={(e) => {
+                  console.error('Image loading error:', e.nativeEvent.error);
+                  // Could show placeholder on error if needed
+                }}
+                
               />
               <View style={styles.restaurantInfo}>
                 <Text style={styles.restaurantName}>{restaurant.name}</Text>

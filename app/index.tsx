@@ -1,4 +1,3 @@
-// app/index.tsx
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -11,23 +10,37 @@ export default function LandingPage() {
     router.push('/login');
   };
 
+  const handleCourierLogin = () => {
+    router.push('/courier-login');
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
+      
       <View style={styles.content}>
         <View style={styles.titleContainer}>
           <Text style={styles.title}>Delivy</Text>
           <Text style={styles.subtitle}>
-            Order food and chat with restaurants in real-time
+            Fast, reliable food delivery
           </Text>
         </View>
 
-        <TouchableOpacity
-          style={styles.button}
-          onPress={handleGetStarted}
-        >
-          <Text style={styles.buttonText}>Get Started</Text>
-        </TouchableOpacity>
+        <View style={styles.buttonContainer}>
+          <TouchableOpacity
+            style={styles.mainButton}
+            onPress={handleGetStarted}
+          >
+            <Text style={styles.mainButtonText}>Get Started</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.secondaryButton}
+            onPress={handleCourierLogin}
+          >
+            <Text style={styles.secondaryButtonText}>Courier Login</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </SafeAreaView>
   );
@@ -40,35 +53,62 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    padding: 20,
+    padding: 24,
     justifyContent: 'space-between',
-    paddingVertical: 100,
+    alignItems: 'center',
   },
   titleContainer: {
+    marginTop: '30%',
     alignItems: 'center',
   },
   title: {
-    fontSize: 48,
+    fontSize: 56,
     fontWeight: 'bold',
     color: '#FFFFFF',
-    marginBottom: 10,
+    marginBottom: 16,
+    letterSpacing: 1,
   },
   subtitle: {
-    fontSize: 18,
+    fontSize: 20,
     color: '#FFFFFF',
-    textAlign: 'center',
     opacity: 0.9,
+    letterSpacing: 0.5,
   },
-  button: {
+  buttonContainer: {
+    width: '100%',
+    gap: 16,
+    marginBottom: '15%',
+  },
+  mainButton: {
     backgroundColor: '#FFFFFF',
-    padding: 16,
-    borderRadius: 12,
+    padding: 18,
+    borderRadius: 16,
     alignItems: 'center',
-    marginTop: 40,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
   },
-  buttonText: {
+  mainButtonText: {
     fontSize: 18,
     fontWeight: '600',
     color: '#2D9A63',
+  },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    padding: 18,
+    borderRadius: 16,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  secondaryButtonText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

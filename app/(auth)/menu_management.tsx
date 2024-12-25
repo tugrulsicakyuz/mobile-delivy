@@ -1,5 +1,3 @@
-// src/app/(auth)/menu_management.tsx
-
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -23,6 +21,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import { API_URL } from '@/src/config';
+
+
 // Types
 interface MenuItem {
   id: string;
@@ -32,8 +32,7 @@ interface MenuItem {
   category: string;
   imageUri?: string;
   isAvailable: boolean;
-  createdAt: number;
-  updatedAt: number;
+  updatedAt?: number;  // Add this line
 }
 
 interface MenuModalProps {
@@ -52,7 +51,7 @@ const MenuItemModal = ({ visible, onClose, onSave, editingItem }: MenuModalProps
   const [imageUri, setImageUri] = useState<string | undefined>();
   const [isAvailable, setIsAvailable] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
-
+  const { user } = useAuth();
   useEffect(() => {
     if (visible) {
       if (editingItem) {
@@ -101,6 +100,40 @@ const MenuItemModal = ({ visible, onClose, onSave, editingItem }: MenuModalProps
     }
   };
 
+  const uploadImage = async (uri: string): Promise<string | undefined> => {
+    try {
+      const formData = new FormData();
+    
+      const uriParts = uri.split('.');
+      const fileType = uriParts[uriParts.length - 1];
+    
+      formData.append('coverImage', {
+        uri: Platform.OS === 'ios' ? uri.replace('file://', '') : uri,
+        type: `image/${fileType}`,
+        name: `photo.${fileType}`,
+      } as any);
+    
+      const response = await fetch(`${API_URL}/restaurants`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+  
+      if (!response.ok) {
+        throw new Error('Upload failed');
+      }
+  
+      const data = await response.json();
+      return data.imageUrl;
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      Alert.alert('Error', 'Failed to upload image. Please try again.');
+      return undefined;
+    }
+  };
   const handleSave = async () => {
     if (!name.trim() || !description.trim() || !category.trim()) {
       Alert.alert('Error', 'Please fill in all required fields');
@@ -115,14 +148,26 @@ const MenuItemModal = ({ visible, onClose, onSave, editingItem }: MenuModalProps
 
     setIsLoading(true);
     try {
+      let finalImageUri = imageUri;
+      
+      if (imageUri && (!editingItem || imageUri !== editingItem.imageUri)) {
+        const uploadedImageUrl = await uploadImage(imageUri);
+        if (uploadedImageUrl) {
+          finalImageUri = uploadedImageUrl;
+        } else {
+          Alert.alert('Warning', 'Failed to upload image, but proceeding with save');
+        }
+      }
+
       await onSave({
         name: name.trim(),
         description: description.trim(),
         category: category.trim(),
         price: priceNum,
-        imageUri,
+        imageUri: finalImageUri,
         isAvailable
       });
+      
       resetForm();
       onClose();
     } catch (error) {
@@ -166,8 +211,13 @@ const MenuItemModal = ({ visible, onClose, onSave, editingItem }: MenuModalProps
             >
               {imageUri ? (
                 <Image
-                  source={{ uri: imageUri }}
+                  source={{ 
+                    uri: imageUri.startsWith('file://') || imageUri.startsWith('content://')
+                      ? imageUri
+                      : `${API_URL}${imageUri}`
+                  }}
                   style={styles.itemImage}
+                  resizeMode="cover"
                 />
               ) : (
                 <View style={styles.imagePlaceholder}>
@@ -257,7 +307,6 @@ export default function MenuManagement() {
       router.replace('/login');
       return;
     }
-
     loadMenuItems();
   }, [user?.id]);
 
@@ -278,10 +327,6 @@ export default function MenuManagement() {
     }
   };
 
-  // Continue in the next part...
-  // src/app/(auth)/menu_management.tsx (continued)
-
-  // Helper function for filtering menu items
   const filteredItems = menuItems.filter(item => {
     const matchesCategory = selectedCategory === 'All' || item.category === selectedCategory;
     const matchesSearch = 
@@ -290,17 +335,15 @@ export default function MenuManagement() {
     return matchesCategory && matchesSearch;
   });
 
-  // Get unique categories from menu items
   const categories = ['All', ...new Set(menuItems.map(item => item.category))];
 
   const handleSaveMenuItem = async (itemData: Omit<MenuItem, 'id' | 'createdAt' | 'updatedAt'>) => {
     if (!user?.id) return;
-  
+
     try {
       const updatedItems = [...menuItems];
-  
+
       if (editingItem) {
-        // Update existing item
         const index = updatedItems.findIndex(item => item.id === editingItem.id);
         if (index !== -1) {
           updatedItems[index] = {
@@ -310,20 +353,14 @@ export default function MenuManagement() {
           };
         }
       } else {
-        // Add new item
         const newItem: MenuItem = {
           id: Math.random().toString(36).substring(2) + Date.now().toString(36),
-          ...itemData,
-          createdAt: Date.now(),
-          updatedAt: Date.now()
+          ...itemData
         };
         updatedItems.push(newItem);
       }
-  
-      // Save locally
+
       await AsyncStorage.setItem(`menu_${user.id}`, JSON.stringify(updatedItems));
-      
-      // Send to server for temporary storage
       await fetch(`${API_URL}/menus/${user.id}`, {
         method: 'POST',
         headers: {
@@ -331,7 +368,7 @@ export default function MenuManagement() {
         },
         body: JSON.stringify({ items: updatedItems }),
       });
-  
+
       setMenuItems(updatedItems);
       Alert.alert('Success', `Item ${editingItem ? 'updated' : 'added'} successfully`);
     } catch (error) {
@@ -360,7 +397,7 @@ export default function MenuManagement() {
     try {
       const updatedItems = menuItems.map(item =>
         item.id === itemId
-          ? { ...item, isAvailable: newValue, updatedAt: Date.now() }
+          ? { ...item, isAvailable: newValue }
           : item
       );
       await AsyncStorage.setItem(`menu_${user.id}`, JSON.stringify(updatedItems));
@@ -407,28 +444,28 @@ export default function MenuManagement() {
       </View>
 
       <ScrollView
-  horizontal
-  showsHorizontalScrollIndicator={false}
-  style={styles.categoryScroll}
->
-  {categories.map((category) => (
-    <TouchableOpacity
-      key={category}
-      style={[
-        styles.categoryButton,
-        selectedCategory === category && styles.categoryButtonActive
-      ]}
-      onPress={() => setSelectedCategory(category)}
-    >
-      <Text style={[
-        styles.categoryText,
-        selectedCategory === category && styles.categoryButtonTextActive
-      ]}>
-        {category}
-      </Text>
-    </TouchableOpacity>
-  ))}
-</ScrollView>
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.categoryScroll}
+      >
+        {categories.map((category) => (
+          <TouchableOpacity
+            key={category}
+            style={[
+              styles.categoryButton,
+              selectedCategory === category && styles.categoryButtonActive
+            ]}
+            onPress={() => setSelectedCategory(category)}
+          >
+            <Text style={[
+              styles.categoryText,
+              selectedCategory === category && styles.categoryButtonTextActive
+            ]}>
+              {category}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       {isLoading ? (
         <View style={styles.centerContent}>
@@ -448,8 +485,12 @@ export default function MenuManagement() {
               <View key={item.id} style={styles.menuItem}>
                 <View style={styles.menuItemContent}>
                   {item.imageUri && (
-                    <Image
-                      source={{ uri: item.imageUri }}
+                    <Image 
+                      source={{
+                        uri: item.imageUri.startsWith('file://') || item.imageUri.startsWith('content://')
+                          ? item.imageUri
+                          : `${API_URL}${item.imageUri}`
+                      }}
                       style={styles.menuItemImage}
                     />
                   )}
@@ -519,7 +560,6 @@ export default function MenuManagement() {
     </SafeAreaView>
   );
 }
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,

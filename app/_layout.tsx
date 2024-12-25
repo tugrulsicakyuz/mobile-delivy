@@ -11,7 +11,9 @@ export default function RootLayout() {
         <Stack screenOptions={{ headerShown: false }}>
           <Stack.Screen name="index" />
           <Stack.Screen name="login" />
+          <Stack.Screen name="courier-login" />
           <Stack.Screen name="(auth)" />
+          
         </Stack>
       </View>
     </AuthProvider>

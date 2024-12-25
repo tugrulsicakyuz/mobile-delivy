@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { Feather } from '@expo/vector-icons';
 import { useAuth } from '@/core/context/AuthContext';
 import { useRouter } from 'expo-router';
 import { API_URL } from '@/src/config';
+import { websocketService } from '@/src/services/websocket';
 
 interface OrderItem {
   id: string;
@@ -27,7 +28,7 @@ interface OrderItem {
   price: number;
 }
 
-type OrderStatus = 'PENDING' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'DELIVERED' | 'CANCELLED';
+type OrderStatus = 'PENDING' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'PICKED_UP' | 'ON_WAY' | 'DELIVERED' | 'CANCELLED';
 
 interface Order {
   id: string;
@@ -39,6 +40,8 @@ interface Order {
   totalAmount: number;
   orderItems: OrderItem[];
   createdAt: number;
+  courierId?: string;
+  courierName?: string;
 }
 
 interface Message {
@@ -48,41 +51,46 @@ interface Message {
   senderId: string;
   isFromUser: boolean;
   timestamp: number;
+  chatType: 'RESTAURANT_CHAT' | 'COURIER_CHAT';
 }
 
 export default function OrdersScreen() {
   const { user } = useAuth();
   const router = useRouter();
+  const chatScrollRef = useRef<ScrollView>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isRestaurantChatOpen, setIsRestaurantChatOpen] = useState(false);
+  const [isCourierChatOpen, setIsCourierChatOpen] = useState(false);
   const [newMessage, setNewMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
-  // Initial data load
-  useEffect(() => {
-    loadOrders();
-  }, []);
-
-  // Real-time updates
-  // Real-time updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (!isLoading && !isRefreshing && selectedOrder) {
-        loadMessages(selectedOrder.id);
+  const loadMessages = async (orderId: string, chatType: 'RESTAURANT_CHAT' | 'COURIER_CHAT') => {
+    try {
+      const response = await fetch(`${API_URL}/messages/${orderId}?type=${chatType}`);
+      if (!response.ok) {
+        throw new Error('Failed to load messages');
       }
-    }, 5000);
+      const messages = await response.json();
+      setMessages(messages);
+      
+      // Scroll to bottom after loading messages
+      setTimeout(() => {
+        chatScrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    } catch (error) {
+      console.error('Error loading messages:', error);
+      Alert.alert('Error', 'Failed to load messages');
+    }
+  };
 
-    return () => clearInterval(interval);
-  }, [isLoading, isRefreshing, selectedOrder]);
-
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
     if (!user?.id) return;
 
     try {
-      setIsLoading(true);
       const response = await fetch(`${API_URL}/orders/${user.id}?type=customer`);
       if (!response.ok) {
         throw new Error('Failed to load orders');
@@ -94,58 +102,76 @@ export default function OrdersScreen() {
       Alert.alert('Error', 'Failed to load orders');
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, [user?.id]);
 
-  const loadMessages = async (orderId: string) => {
-    try {
-      const response = await fetch(`${API_URL}/messages/${orderId}`);
-      if (!response.ok) {
-        throw new Error('Failed to load messages');
-      }
-      const messages = await response.json();
-      setMessages(messages);
-    } catch (error) {
-      console.error('Error loading messages:', error);
-      Alert.alert('Error', 'Failed to load messages');
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
+
+  useEffect(() => {
+    if (selectedOrder && (isRestaurantChatOpen || isCourierChatOpen)) {
+      // Initial load of messages
+      loadMessages(selectedOrder.id, isRestaurantChatOpen ? 'RESTAURANT_CHAT' : 'COURIER_CHAT');
+
+      // Connect to WebSocket
+      websocketService.connect(selectedOrder.id);
+
+      // Listen for new messages
+      websocketService.onMessage((message) => {
+        if (message.type === 'new_message' && 
+            message.data.orderId === selectedOrder.id &&
+            message.data.chatType === (isRestaurantChatOpen ? 'RESTAURANT_CHAT' : 'COURIER_CHAT')) {
+          setMessages(prev => [...prev, message.data]);
+          chatScrollRef.current?.scrollToEnd({ animated: true });
+        }
+      });
+
+      return () => {
+        websocketService.disconnect();
+      };
     }
-  };
+  }, [selectedOrder?.id, isRestaurantChatOpen, isCourierChatOpen]);
+  const handleSendMessage = async (chatType: 'RESTAURANT_CHAT' | 'COURIER_CHAT') => {
+    if (!selectedOrder || !user?.id || !newMessage.trim() || isSending) return;
 
-  const handleOpenChat = async (order: Order) => {
-    setSelectedOrder(order);
-    setIsChatOpen(true);
-    await loadMessages(order.id);
-  };
-
-  const handleSendMessage = async () => {
-    if (!selectedOrder || !user || !newMessage.trim()) return;
-
+    setIsSending(true);
     try {
       const messageData = {
+        id: Math.random().toString(36).slice(2),
         orderId: selectedOrder.id,
         content: newMessage.trim(),
         senderId: user.id,
-        isFromUser: user.userType === 'CUSTOMER', // This fixes the user type issue
-        timestamp: Date.now()
+        isFromUser: true,
+        timestamp: Date.now(),
+        chatType: chatType
       };
 
-      const response = await fetch(`${API_URL}/messages/${selectedOrder.id}`, {
+      // Send via WebSocket
+      websocketService.sendMessage({
+        type: 'new_message',
+        data: messageData
+      });
+
+      // Save to server
+      await fetch(`${API_URL}/messages/${selectedOrder.id}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(messageData)
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to send message');
-      }
-
       setNewMessage('');
-      loadMessages(selectedOrder.id); // Reload messages
+      
+      // Scroll to bottom
+      setTimeout(() => {
+        chatScrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     } catch (error) {
       console.error('Error sending message:', error);
       Alert.alert('Error', 'Failed to send message');
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -181,7 +207,10 @@ export default function OrdersScreen() {
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
-            onRefresh={loadOrders}
+            onRefresh={() => {
+              setIsRefreshing(true);
+              loadOrders();
+            }}
             colors={['#2D9A63']}
           />
         }
@@ -202,13 +231,15 @@ export default function OrdersScreen() {
                   <Text style={styles.restaurantName}>{order.restaurantName}</Text>
                   <Text style={styles.orderId}>#{order.id.slice(-6)}</Text>
                 </View>
-                <View style={[styles.statusBadge,
-                order.status === 'PENDING' ? styles.statusPending :
-                  order.status === 'ACCEPTED' ? styles.statusAccepted :
-                    order.status === 'PREPARING' ? styles.statusPreparing :
-                      order.status === 'READY' ? styles.statusReady :
-                        order.status === 'DELIVERED' ? styles.statusDelivered :
-                          styles.statusDefault
+                <View style={[
+                  styles.statusBadge,
+                  order.status === 'PENDING' ? styles.statusPending :
+                    order.status === 'ACCEPTED' ? styles.statusAccepted :
+                      order.status === 'PREPARING' ? styles.statusPreparing :
+                        order.status === 'READY' ? styles.statusReady :
+                          order.status === 'PICKED_UP' ? styles.statusInTransit :
+                            order.status === 'ON_WAY' ? styles.statusInTransit :
+                              styles.statusDelivered
                 ]}>
                   <Text style={styles.statusText}>{order.status}</Text>
                 </View>
@@ -226,27 +257,45 @@ export default function OrdersScreen() {
                 <Text style={styles.orderTotal}>
                   ${order.totalAmount.toFixed(2)}
                 </Text>
-                <TouchableOpacity
-                  style={styles.chatButton}
-                  onPress={() => handleOpenChat(order)}
-                >
-                  <Feather name="message-circle" size={20} color="#2D9A63" />
-                  <Text style={styles.chatButtonText}>Chat</Text>
-                </TouchableOpacity>
+                <View style={styles.chatButtons}>
+                  <TouchableOpacity
+                    style={styles.chatButton}
+                    onPress={() => {
+                      setSelectedOrder(order);
+                      setIsRestaurantChatOpen(true);
+                    }}
+                  >
+                    <Feather name="message-circle" size={20} color="#2D9A63" />
+                    <Text style={styles.chatButtonText}>Restaurant</Text>
+                  </TouchableOpacity>
+
+                  {(order.status === 'PICKED_UP' || order.status === 'ON_WAY') && order.courierId && (
+                    <TouchableOpacity
+                      style={styles.chatButton}
+                      onPress={() => {
+                        setSelectedOrder(order);
+                        setIsCourierChatOpen(true);
+                      }}
+                    >
+                      <Feather name="message-circle" size={20} color="#2D9A63" />
+                      <Text style={styles.chatButtonText}>Courier</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
             </View>
           ))
         )}
       </ScrollView>
-
+      {/* Restaurant Chat Modal */}
       <Modal
-        visible={isChatOpen}
+        visible={isRestaurantChatOpen}
         animationType="slide"
-        onRequestClose={() => setIsChatOpen(false)}
+        onRequestClose={() => setIsRestaurantChatOpen(false)}
       >
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setIsChatOpen(false)}>
+            <TouchableOpacity onPress={() => setIsRestaurantChatOpen(false)}>
               <Feather name="x" size={24} color="#2D9A63" />
             </TouchableOpacity>
             <Text style={styles.modalTitle}>
@@ -255,24 +304,36 @@ export default function OrdersScreen() {
             <View style={{ width: 24 }} />
           </View>
 
-          <ScrollView style={styles.chatContainer}>
+          <ScrollView
+            ref={chatScrollRef}
+            style={styles.chatContainer}
+            onContentSizeChange={() => {
+              chatScrollRef.current?.scrollToEnd({ animated: true });
+            }}
+          >
             {messages.map((message) => (
               <View
-              key={message.id}
-              style={[
-                styles.messageContainer,
-                message.isFromUser ? styles.customerMessage : styles.restaurantMessage
-              ]}
-            >
+                key={message.id}
+                style={[
+                  styles.messageContainer,
+                  message.isFromUser
+                    ? styles.userMessage
+                    : styles.restaurantMessage
+                ]}
+              >
                 <Text style={[
                   styles.messageText,
-                  message.senderId === user?.id ? styles.customerMessageText : styles.restaurantMessageText
+                  message.isFromUser
+                    ? styles.userMessageText
+                    : styles.restaurantMessageText
                 ]}>
                   {message.content}
                 </Text>
                 <Text style={[
                   styles.messageTime,
-                  message.senderId === user?.id ? styles.customerMessageTime : styles.restaurantMessageTime
+                  message.isFromUser
+                    ? styles.userMessageTime
+                    : styles.restaurantMessageTime
                 ]}>
                   {new Date(message.timestamp).toLocaleTimeString()}
                 </Text>
@@ -295,10 +356,90 @@ export default function OrdersScreen() {
             <TouchableOpacity
               style={[
                 styles.sendButton,
-                !newMessage.trim() && styles.sendButtonDisabled
+                (!newMessage.trim() || isSending) && styles.sendButtonDisabled
               ]}
-              onPress={handleSendMessage}
-              disabled={!newMessage.trim()}
+              onPress={() => handleSendMessage('RESTAURANT_CHAT')}
+              disabled={!newMessage.trim() || isSending}
+            >
+              <Feather name="send" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Courier Chat Modal */}
+      <Modal
+        visible={isCourierChatOpen}
+        animationType="slide"
+        onRequestClose={() => setIsCourierChatOpen(false)}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setIsCourierChatOpen(false)}>
+              <Feather name="x" size={24} color="#2D9A63" />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>
+              Chat with {selectedOrder?.courierName}
+            </Text>
+            <View style={{ width: 24 }} />
+          </View>
+
+          <ScrollView
+            ref={chatScrollRef}
+            style={styles.chatContainer}
+            onContentSizeChange={() => {
+              chatScrollRef.current?.scrollToEnd({ animated: true });
+            }}
+          >
+            {messages.map((message) => (
+              <View
+                key={message.id}
+                style={[
+                  styles.messageContainer,
+                  message.isFromUser
+                    ? styles.userMessage
+                    : styles.courierMessage
+                ]}
+              >
+                <Text style={[
+                  styles.messageText,
+                  message.isFromUser
+                    ? styles.userMessageText
+                    : styles.courierMessageText
+                ]}>
+                  {message.content}
+                </Text>
+                <Text style={[
+                  styles.messageTime,
+                  message.isFromUser
+                    ? styles.userMessageTime
+                    : styles.courierMessageTime
+                ]}>
+                  {new Date(message.timestamp).toLocaleTimeString()}
+                </Text>
+              </View>
+            ))}
+          </ScrollView>
+
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.inputContainer}
+          >
+            <TextInput
+              style={styles.messageInput}
+              value={newMessage}
+              onChangeText={setNewMessage}
+              placeholder="Type a message..."
+              multiline
+              maxLength={500}
+            />
+            <TouchableOpacity
+              style={[
+                styles.sendButton,
+                (!newMessage.trim() || isSending) && styles.sendButtonDisabled
+              ]}
+              onPress={() => handleSendMessage('COURIER_CHAT')}
+              disabled={!newMessage.trim() || isSending}
             >
               <Feather name="send" size={20} color="#FFFFFF" />
             </TouchableOpacity>
@@ -344,8 +485,9 @@ const styles = StyleSheet.create({
   orderCard: {
     backgroundColor: '#FFFFFF',
     margin: 16,
-    padding: 16,
+    marginBottom: 16,
     borderRadius: 12,
+    padding: 16,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -384,11 +526,11 @@ const styles = StyleSheet.create({
   statusReady: {
     backgroundColor: '#5CB85C',
   },
+  statusInTransit: {
+    backgroundColor: '#FF9800',
+  },
   statusDelivered: {
     backgroundColor: '#2D9A63',
-  },
-  statusDefault: {
-    backgroundColor: '#666666',
   },
   statusText: {
     color: '#FFFFFF',
@@ -416,6 +558,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#2D9A63',
   },
+  chatButtons: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   chatButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -427,6 +573,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
     color: '#2D9A63',
     fontWeight: '600',
+    fontSize: 14,
   },
   modalContainer: {
     flex: 1,
@@ -454,7 +601,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 12,
   },
-  customerMessage: {
+  userMessage: {
     alignSelf: 'flex-end',
     backgroundColor: '#2D9A63',
   },
@@ -462,24 +609,34 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     backgroundColor: '#F0F0F0',
   },
+  courierMessage: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#FF9800',
+  },
   messageText: {
     fontSize: 16,
   },
-  customerMessageText: {
+  userMessageText: {
     color: '#FFFFFF',
   },
   restaurantMessageText: {
     color: '#333333',
   },
+  courierMessageText: {
+    color: '#FFFFFF',
+  },
   messageTime: {
     fontSize: 12,
     marginTop: 4,
   },
-  customerMessageTime: {
+  userMessageTime: {
     color: 'rgba(255,255,255,0.7)',
   },
   restaurantMessageTime: {
     color: '#666666',
+  },
+  courierMessageTime: {
+    color: 'rgba(255,255,255,0.7)',
   },
   inputContainer: {
     flexDirection: 'row',
@@ -513,10 +670,4 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#666666',
   },
-  borderBottomWidth: {
-    borderBottomWidth: 1,
-  },
-  borderBottomColor: {
-    borderBottomColor: '#E0E0E0',
-  }
 });

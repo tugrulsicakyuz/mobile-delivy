@@ -1,5 +1,3 @@
-// app/(auth)/rest_panel.tsx
-
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
@@ -7,32 +5,20 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Switch,
   Alert,
   ActivityIndicator,
   RefreshControl,
-  Platform,
-  Image,
   Modal,
   TextInput,
   KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Feather } from '@expo/vector-icons';
 import { useAuth } from '@/core/context/AuthContext';
 import { useRouter } from 'expo-router';
+import { Feather } from '@expo/vector-icons';
 import { API_URL } from '@/src/config';
-import * as ImagePicker from 'expo-image-picker';
 import { websocketService } from '@/src/services/websocket';
-
-// Types
-interface Restaurant {
-  id: string;
-  name: string;
-  coverImage?: string;
-  isActive: boolean;
-  updatedAt: number;
-}
 
 interface OrderItem {
   id: string;
@@ -42,11 +28,16 @@ interface OrderItem {
   price: number;
 }
 
+type OrderStatus = 'PICKED_UP' | 'ON_WAY' | 'DELIVERED';
+
 interface Order {
   id: string;
-  userId: string;
+  restaurantId: string;
+  restaurantName: string;
+  customerId: string;
   customerName: string;
-  status: 'PENDING' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'DELIVERED';
+  deliveryAddress: string;
+  status: OrderStatus;
   orderItems: OrderItem[];
   totalAmount: number;
   createdAt: number;
@@ -59,111 +50,67 @@ interface Message {
   senderId: string;
   isFromUser: boolean;
   timestamp: number;
+  chatType: 'COURIER_CHAT';
 }
 
-export default function RestaurantPanel() {
+export default function ActiveOrders() {
   const { user } = useAuth();
   const router = useRouter();
   const chatScrollRef = useRef<ScrollView>(null);
 
-  // Main state
+  // State
+  const [activeOrders, setActiveOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [restaurant, setRestaurant] = useState<Restaurant | null>(null);
-  const [orders, setOrders] = useState<Order[]>([]);
-
-  // Chat state
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [newMessage, setNewMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [isUpdatingImage, setIsUpdatingImage] = useState(false);
 
-  // Auto-refresh setup
-  useEffect(() => {
-    const refreshInterval = setInterval(() => {
-      loadOrders();
-      loadRestaurantData();
-    }, 30000); // Refresh every 30 seconds
-
-    return () => clearInterval(refreshInterval);
-  }, []);
-
-  // Load restaurant data
-  const loadRestaurantData = async () => {
+  // Load active orders
+  const loadActiveOrders = async () => {
     if (!user?.id) return;
-
+  
     try {
-      const response = await fetch(`${API_URL}/restaurants/${user.id}`);
-      
-      if (response.ok) {
-        // If restaurant exists, use that data
-        const data = await response.json();
-        setRestaurant(data);
-      } else if (response.status === 404) {
-        // If restaurant doesn't exist, create it
-        const restaurantData: Restaurant = {
-          id: user.id,
-          name: user.fullName,
-          isActive: false,
-          updatedAt: Date.now()
-        };
-
-        const createResponse = await fetch(`${API_URL}/restaurants`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(restaurantData)
-        });
-
-        if (createResponse.ok) {
-          const data = await createResponse.json();
-          setRestaurant(data.restaurant);
-        } else {
-          throw new Error('Failed to create restaurant');
-        }
+      setIsLoading(true);
+      console.log('Loading active orders for courier:', user.id);  // Add this log
+      const response = await fetch(`${API_URL}/orders/${user.id}?type=courier`);
+  
+      if (!response.ok) {
+        throw new Error('Failed to fetch orders');
       }
-    } catch (error) {
-      console.error('Error loading restaurant:', error);
-      Alert.alert('Error', 'Failed to load restaurant data');
-    }
-  };
-
-  // Load orders
-  const loadOrders = async () => {
-    if (!user?.id) return;
-
-    try {
-      const response = await fetch(`${API_URL}/orders/${user.id}?type=restaurant`);
-      if (!response.ok) throw new Error('Failed to load orders');
+  
       const data = await response.json();
-      setOrders(data);
+      console.log('Received orders:', data);  // Add this log
+      setActiveOrders(data);
     } catch (error) {
       console.error('Error loading orders:', error);
-      Alert.alert('Error', 'Failed to load orders');
+      Alert.alert('Error', 'Failed to load active orders');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
   };
 
-  // Initial data load
+  // Initial data load and refresh interval
   useEffect(() => {
-    if (user?.id) {
-      loadRestaurantData();
-      loadOrders();
-    }
+    loadActiveOrders();
+    const interval = setInterval(loadActiveOrders, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
   }, [user?.id]);
+
   // Load messages
   const loadMessages = async (orderId: string) => {
     try {
-      const response = await fetch(`${API_URL}/messages/${orderId}?type=RESTAURANT_CHAT`);
+      const response = await fetch(`${API_URL}/messages/${orderId}?type=COURIER_CHAT`);
       if (!response.ok) {
         throw new Error('Failed to load messages');
       }
       const messages = await response.json();
       setMessages(messages);
       
+      // Scroll to bottom after messages load
       setTimeout(() => {
         chatScrollRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -172,6 +119,7 @@ export default function RestaurantPanel() {
       Alert.alert('Error', 'Failed to load messages');
     }
   };
+
   // Chat WebSocket setup
   useEffect(() => {
     if (selectedOrder && isChatOpen) {
@@ -183,7 +131,9 @@ export default function RestaurantPanel() {
 
       // Listen for new messages
       websocketService.onMessage((message) => {
-        if (message.type === 'new_message' && message.data.orderId === selectedOrder.id) {
+        if (message.type === 'new_message' && 
+            message.data.orderId === selectedOrder.id &&
+            message.data.chatType === 'COURIER_CHAT') {
           setMessages(prev => [...prev, message.data]);
           chatScrollRef.current?.scrollToEnd({ animated: true });
         }
@@ -194,88 +144,6 @@ export default function RestaurantPanel() {
       };
     }
   }, [selectedOrder?.id, isChatOpen]);
-
-  // Handle restaurant status toggle
-  const handleToggleStatus = async (newStatus: boolean) => {
-    if (!user?.id || !restaurant) return;
-
-    try {
-      const formData = new FormData();
-      formData.append('id', user.id);
-      formData.append('name', restaurant.name);
-      formData.append('isActive', String(newStatus));
-      if (restaurant.coverImage) {
-        formData.append('coverImage', restaurant.coverImage);
-      }
-
-      const response = await fetch(`${API_URL}/restaurants`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) throw new Error('Failed to update status');
-      const data = await response.json();
-      setRestaurant(data.restaurant);
-      Alert.alert('Success', `Restaurant is now ${newStatus ? 'open' : 'closed'}`);
-    } catch (error) {
-      console.error('Error updating status:', error);
-      Alert.alert('Error', 'Failed to update status');
-    }
-  };
-
-  // Handle image picking and upload
-  const handleImagePick = async () => {
-    if (!user?.id || !restaurant) return;
-    
-    try {
-      setIsUpdatingImage(true);
-      
-      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permissionResult.granted) {
-        Alert.alert('Permission needed', 'Please enable photo library access');
-        return;
-      }
-  
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [16, 9],
-        quality: 0.5,
-      });
-  
-      if (result.canceled) return;
-  
-      const formData = new FormData();
-      formData.append('id', user.id);
-      formData.append('name', restaurant.name);
-      formData.append('isActive', String(restaurant.isActive));
-      
-      const uriParts = result.assets[0].uri.split('.');
-      const fileType = uriParts[uriParts.length - 1];
-      
-      formData.append('coverImage', {
-        uri: Platform.OS === 'ios' ? result.assets[0].uri.replace('file://', '') : result.assets[0].uri,
-        type: `image/${fileType}`,
-        name: `photo.${fileType}`,
-      } as any);
-  
-      const response = await fetch(`${API_URL}/restaurants`, {
-        method: 'POST',
-        body: formData,
-      });
-  
-      if (!response.ok) throw new Error('Failed to update cover image');
-      
-      const data = await response.json();
-      setRestaurant(data.restaurant);
-      Alert.alert('Success', 'Cover image updated successfully');
-    } catch (error) {
-      console.error('Error updating cover image:', error);
-      Alert.alert('Error', 'Failed to update cover image');
-    } finally {
-      setIsUpdatingImage(false);
-    }
-  };
 
   // Handle sending messages
   const handleSendMessage = async () => {
@@ -290,7 +158,7 @@ export default function RestaurantPanel() {
         senderId: user.id,
         isFromUser: false,
         timestamp: Date.now(),
-        chatType: 'RESTAURANT_CHAT'
+        chatType: 'COURIER_CHAT'
       };
   
       // Send via WebSocket
@@ -308,6 +176,7 @@ export default function RestaurantPanel() {
   
       setNewMessage('');
       
+      // Scroll to bottom
       setTimeout(() => {
         chatScrollRef.current?.scrollToEnd({ animated: true });
       }, 100);
@@ -320,30 +189,29 @@ export default function RestaurantPanel() {
   };
 
   // Handle order status updates
-  const handleUpdateOrderStatus = async (orderId: string, newStatus: Order['status']) => {
+  const handleUpdateOrderStatus = async (orderId: string, newStatus: OrderStatus) => {
     try {
       const response = await fetch(`${API_URL}/orders/${orderId}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus, userId: user?.id })
+        body: JSON.stringify({ status: newStatus, courierId: user?.id })
       });
 
       if (!response.ok) throw new Error('Failed to update order status');
-      await loadOrders();
+      await loadActiveOrders();
       Alert.alert('Success', `Order status updated to ${newStatus}`);
     } catch (error) {
       console.error('Error updating order:', error);
       Alert.alert('Error', 'Failed to update order status');
     }
   };
-
   // Access check
-  if (!user || user.userType !== 'RESTAURANT') {
+  if (!user || user.userType !== 'COURIER') {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.centerContent}>
           <Text style={styles.errorText}>Access Denied</Text>
-          <Text style={styles.subText}>Only restaurant accounts can access this page</Text>
+          <Text style={styles.subText}>Only courier accounts can access this page</Text>
         </View>
       </SafeAreaView>
     );
@@ -359,87 +227,52 @@ export default function RestaurantPanel() {
       </SafeAreaView>
     );
   }
+
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
-        <View>
-          {restaurant?.coverImage ? (
-            <Image
-              source={{ uri: `${API_URL}${restaurant.coverImage}` }}
-              style={styles.coverImage}
-            />
-          ) : (
-            <View style={styles.placeholderImage}>
-              <Text>No cover image</Text>
-            </View>
-          )}
-          <Text style={styles.title}>Restaurant Panel</Text>
-          <Text style={styles.restaurantName}>{restaurant?.name}</Text>
-        </View>
-        <View style={styles.controlsContainer}>
-          <TouchableOpacity
-            style={[
-              styles.imageButton,
-              !restaurant?.coverImage && styles.imageButtonGrey
-            ]}
-            onPress={handleImagePick}
-            disabled={isUpdatingImage}
-          >
-            <Feather name="image" size={20} color="#FFFFFF" />
-          </TouchableOpacity>
-          <View style={styles.statusContainer}>
-            <Text style={styles.statusLabel}>
-              {restaurant?.isActive ? 'Open' : 'Closed'}
-            </Text>
-            <Switch
-              value={restaurant?.isActive || false}
-              onValueChange={handleToggleStatus}
-              trackColor={{ false: '#767577', true: '#2D9A63' }}
-              thumbColor="#f4f3f4"
-            />
-          </View>
-        </View>
+        <Text style={styles.title}>Active Orders</Text>
       </View>
 
-      {/* Orders List */}
       <ScrollView
+        style={styles.orderList}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}
             onRefresh={() => {
               setIsRefreshing(true);
-              loadOrders();
+              loadActiveOrders();
             }}
             colors={['#2D9A63']}
           />
         }
       >
-        {orders.length === 0 ? (
+        {activeOrders.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No orders yet</Text>
+            <Text style={styles.emptyText}>No active orders</Text>
+            <Text style={styles.subText}>Pull down to refresh</Text>
           </View>
         ) : (
-          orders.map((order) => (
+          activeOrders.map((order) => (
             <View key={order.id} style={styles.orderCard}>
+              {/* Restaurant Info */}
               <View style={styles.orderHeader}>
                 <View>
-                  <Text style={styles.customerName}>{order.customerName}</Text>
-                  <Text style={styles.orderId}>#{order.id.slice(-6)}</Text>
+                  <Text style={styles.restaurantName}>{order.restaurantName}</Text>
+                  <Text style={styles.orderId}>Order #{order.id.slice(-6)}</Text>
                 </View>
                 <View style={[
                   styles.statusBadge,
-                  order.status === 'PENDING' ? styles.statusPending :
-                    order.status === 'ACCEPTED' ? styles.statusAccepted :
-                      order.status === 'PREPARING' ? styles.statusPreparing :
-                        order.status === 'READY' ? styles.statusReady :
-                          styles.statusDelivered
+                  order.status === 'PICKED_UP' ? styles.pickedUpBadge :
+                    order.status === 'ON_WAY' ? styles.onWayBadge :
+                      styles.deliveredBadge
                 ]}>
                   <Text style={styles.statusText}>{order.status}</Text>
                 </View>
               </View>
 
-              <View style={styles.orderItems}>
+              {/* Order Items */}
+              <View style={styles.orderDetails}>
                 {order.orderItems.map((item) => (
                   <Text key={item.id} style={styles.orderItem}>
                     {item.quantity}x {item.name}
@@ -447,34 +280,46 @@ export default function RestaurantPanel() {
                 ))}
               </View>
 
+              {/* Customer & Delivery Info */}
+              <View style={styles.customerInfo}>
+                <Text style={styles.customerName}>Customer: {order.customerName}</Text>
+                <View style={styles.addressContainer}>
+                  <Feather name="map-pin" size={16} color="#666666" />
+                  <Text style={styles.addressText}>{order.deliveryAddress}</Text>
+                </View>
+              </View>
+
+              {/* Actions */}
               <View style={styles.orderFooter}>
-                <Text style={styles.orderTotal}>
-                  ${order.totalAmount.toFixed(2)}
-                </Text>
-                <View style={styles.footerRight}>
+                <Text style={styles.totalAmount}>${order.totalAmount.toFixed(2)}</Text>
+                <View style={styles.footerActions}>
                   {order.status !== 'DELIVERED' && (
                     <TouchableOpacity
                       style={styles.actionButton}
                       onPress={() => {
                         const nextStatus =
-                          order.status === 'PENDING' ? 'ACCEPTED' :
-                            order.status === 'ACCEPTED' ? 'PREPARING' :
-                              order.status === 'PREPARING' ? 'READY' :
-                                order.status;
+                          order.status === 'PICKED_UP' ? 'ON_WAY' :
+                            order.status === 'ON_WAY' ? 'DELIVERED' :
+                              order.status;
                         handleUpdateOrderStatus(order.id, nextStatus);
                       }}
                     >
-                      <Text style={styles.actionButtonText}>Update</Text>
+                      <Text style={styles.actionButtonText}>
+                        {order.status === 'PICKED_UP' ? 'Start Delivery' :
+                          order.status === 'ON_WAY' ? 'Complete Delivery' :
+                            'Update'}
+                      </Text>
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity
-                    style={styles.actionButton}
+                    style={styles.chatButton}
                     onPress={() => {
                       setSelectedOrder(order);
                       setIsChatOpen(true);
                     }}
                   >
-                    <Text style={styles.actionButtonText}>Chat</Text>
+                    <Feather name="message-circle" size={20} color="#FFFFFF" />
+                    <Text style={styles.chatButtonText}>Chat</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -513,14 +358,14 @@ export default function RestaurantPanel() {
                 style={[
                   styles.messageContainer,
                   message.senderId === user?.id
-                    ? styles.restaurantMessage
+                    ? styles.courierMessage
                     : styles.customerMessage
                 ]}
               >
                 <Text style={[
                   styles.messageText,
                   message.senderId === user?.id
-                    ? styles.restaurantMessageText
+                    ? styles.courierMessageText
                     : styles.customerMessageText
                 ]}>
                   {message.content}
@@ -528,7 +373,7 @@ export default function RestaurantPanel() {
                 <Text style={[
                   styles.messageTime,
                   message.senderId === user?.id
-                    ? styles.restaurantMessageTime
+                    ? styles.courierMessageTime
                     : styles.customerMessageTime
                 ]}>
                   {new Date(message.timestamp).toLocaleTimeString()}
@@ -578,9 +423,6 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: '#E0E0E0',
@@ -590,57 +432,8 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#2D9A63',
   },
-  restaurantName: {
-    fontSize: 16,
-    color: '#666666',
-    marginTop: 4,
-  },
-  coverImage: {
-    width: '100%',
-    height: 120,
-    borderRadius: 8,
-    marginBottom: 12,
-  },
-  placeholderImage: {
-    width: '100%',
-    height: 120,
-    borderRadius: 8,
-    marginBottom: 12,
-    backgroundColor: '#F5F5F5',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  controlsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  imageButton: {
-    backgroundColor: '#2D9A63',
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  imageButtonGrey: {
-    backgroundColor: '#666666',
-  },
-  statusContainer: {
-    alignItems: 'center',
-  },
-  statusLabel: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 4,
-  },
-  emptyState: {
-    padding: 32,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#666666',
+  orderList: {
+    flex: 1,
   },
   orderCard: {
     margin: 16,
@@ -659,9 +452,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  customerName: {
-    fontSize: 16,
+  restaurantName: {
+    fontSize: 18,
     fontWeight: '600',
+    color: '#333333',
   },
   orderId: {
     fontSize: 14,
@@ -673,27 +467,21 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
   },
-  statusPending: {
+  pickedUpBadge: {
     backgroundColor: '#FFB020',
   },
-  statusAccepted: {
-    backgroundColor: '#0275D8',
-  },
-  statusPreparing: {
-    backgroundColor: '#5BC0DE',
-  },
-  statusReady: {
-    backgroundColor: '#5CB85C',
-  },
-  statusDelivered: {
+  onWayBadge: {
     backgroundColor: '#2D9A63',
+  },
+  deliveredBadge: {
+    backgroundColor: '#666666',
   },
   statusText: {
     color: '#FFFFFF',
     fontSize: 12,
     fontWeight: '500',
   },
-  orderItems: {
+  orderDetails: {
     borderBottomWidth: 1,
     borderBottomColor: '#E0E0E0',
     paddingBottom: 12,
@@ -704,6 +492,25 @@ const styles = StyleSheet.create({
     color: '#666666',
     marginBottom: 4,
   },
+  customerInfo: {
+    marginBottom: 12,
+  },
+  customerName: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#333333',
+    marginBottom: 4,
+  },
+  addressContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  addressText: {
+    fontSize: 14,
+    color: '#666666',
+    flex: 1,
+  },
   orderFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -713,38 +520,57 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#E0E0E0',
   },
-  orderTotal: {
-    fontSize: 16,
+  totalAmount: {
+    fontSize: 18,
     fontWeight: '600',
     color: '#2D9A63',
   },
+  footerActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
   actionButton: {
     backgroundColor: '#2D9A63',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
-    width: 70,
   },
   actionButtonText: {
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '600',
-    textAlign: 'center',
+  },
+  chatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FF9800',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  chatButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   errorText: {
     fontSize: 18,
     color: '#FF4444',
     marginBottom: 8,
   },
+  emptyState: {
+    padding: 32,
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#666666',
+    marginBottom: 8,
+  },
   subText: {
     fontSize: 14,
-    color: '#666666',
-  },
-  footerRight: {
-    flexDirection: 'row',
-    gap: 8,
-    flex: 1,  // Added flex: 1
-    justifyContent: 'flex-end',  // Added justifyContent
+    color: '#999999',
   },
   // Chat Modal Styles
   modalContainer: {
@@ -777,9 +603,9 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     backgroundColor: '#F0F0F0',
   },
-  restaurantMessage: {
+  courierMessage: {
     alignSelf: 'flex-end',
-    backgroundColor: '#2D9A63',
+    backgroundColor: '#FF9800',
   },
   messageText: {
     fontSize: 16,
@@ -787,7 +613,7 @@ const styles = StyleSheet.create({
   customerMessageText: {
     color: '#333333',
   },
-  restaurantMessageText: {
+  courierMessageText: {
     color: '#FFFFFF',
   },
   messageTime: {
@@ -797,7 +623,7 @@ const styles = StyleSheet.create({
   customerMessageTime: {
     color: '#666666',
   },
-  restaurantMessageTime: {
+  courierMessageTime: {
     color: 'rgba(255,255,255,0.7)',
   },
   inputContainer: {
@@ -819,7 +645,7 @@ const styles = StyleSheet.create({
   sendButton: {
     padding: 12,
     borderRadius: 24,
-    backgroundColor: '#2D9A63',
+    backgroundColor: '#FF9800',
   },
   sendButtonDisabled: {
     opacity: 0.5,

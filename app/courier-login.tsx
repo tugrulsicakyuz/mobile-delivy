@@ -5,17 +5,16 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/core/context/AuthContext';
 import { StatusBar } from 'expo-status-bar';
 
-export default function LoginPage() {
+export default function CourierLoginPage() {
   const router = useRouter();
   const { login } = useAuth();
-  const [isRestaurant, setIsRestaurant] = useState(false);
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
-  const [address, setAddress] = useState('');
+  const [vehicleInfo, setVehicleInfo] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!fullName.trim() || !phone.trim() || !address.trim()) {
+    if (!fullName.trim() || !phone.trim() || !vehicleInfo.trim()) {
       Alert.alert('Error', 'Please fill in all fields');
       return;
     }
@@ -25,11 +24,12 @@ export default function LoginPage() {
       await login({
         fullName: fullName.trim(),
         phone: phone.trim(),
-        address: address.trim(),
-        userType: isRestaurant ? ('RESTAURANT' as const) : ('CUSTOMER' as const)
+        address: '', // Not needed for courier
+        userType: 'COURIER',
+        vehicleInfo: vehicleInfo.trim()
       });
       
-      // AuthContext will handle navigation
+      router.replace('/(courier)/courier_panel');
     } catch (error) {
       console.error('Login error:', error);
       Alert.alert('Error', 'Login failed. Please try again.');
@@ -43,12 +43,12 @@ export default function LoginPage() {
       <StatusBar style="dark" />
       
       <View style={styles.content}>
-        <Text style={styles.title}>Welcome to Delivy</Text>
+        <Text style={styles.title}>Courier Login</Text>
 
         <View style={styles.form}>
           <TextInput
             style={styles.input}
-            placeholder={isRestaurant ? "Restaurant Name" : "Full Name"}
+            placeholder="Full Name"
             value={fullName}
             onChangeText={setFullName}
             editable={!isLoading}
@@ -64,44 +64,14 @@ export default function LoginPage() {
           />
 
           <TextInput
-            style={[styles.input, styles.addressInput]}
-            placeholder="Address"
-            value={address}
-            onChangeText={setAddress}
+            style={[styles.input, styles.vehicleInput]}
+            placeholder="Vehicle Information (e.g., Blue Honda Civic)"
+            value={vehicleInfo}
+            onChangeText={setVehicleInfo}
             multiline
-            numberOfLines={3}
+            numberOfLines={2}
             editable={!isLoading}
           />
-
-          <View style={styles.toggleContainer}>
-            <TouchableOpacity 
-              style={[
-                styles.toggleButton, 
-                !isRestaurant && styles.toggleButtonActive
-              ]}
-              onPress={() => setIsRestaurant(false)}
-              disabled={isLoading}
-            >
-              <Text style={[
-                styles.toggleText,
-                !isRestaurant && styles.toggleTextActive
-              ]}>Customer</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[
-                styles.toggleButton,
-                isRestaurant && styles.toggleButtonActive
-              ]}
-              onPress={() => setIsRestaurant(true)}
-              disabled={isLoading}
-            >
-              <Text style={[
-                styles.toggleText,
-                isRestaurant && styles.toggleTextActive
-              ]}>Restaurant</Text>
-            </TouchableOpacity>
-          </View>
 
           <TouchableOpacity 
             style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
@@ -111,6 +81,14 @@ export default function LoginPage() {
             <Text style={styles.loginButtonText}>
               {isLoading ? 'Logging in...' : 'Continue'}
             </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => router.back()}
+            disabled={isLoading}
+          >
+            <Text style={styles.backButtonText}>Back to Home</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -146,33 +124,9 @@ const styles = StyleSheet.create({
     fontSize: 16,
     backgroundColor: '#F8F8F8',
   },
-  addressInput: {
-    height: 100,
+  vehicleInput: {
+    minHeight: 80,
     textAlignVertical: 'top',
-  },
-  toggleContainer: {
-    flexDirection: 'row',
-    gap: 10,
-    marginVertical: 10,
-  },
-  toggleButton: {
-    flex: 1,
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#2D9A63',
-    alignItems: 'center',
-  },
-  toggleButtonActive: {
-    backgroundColor: '#2D9A63',
-  },
-  toggleText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#2D9A63',
-  },
-  toggleTextActive: {
-    color: '#FFFFFF',
   },
   loginButton: {
     backgroundColor: '#2D9A63',
@@ -187,6 +141,16 @@ const styles = StyleSheet.create({
   loginButtonText: {
     color: '#FFFFFF',
     fontSize: 18,
+    fontWeight: '600',
+  },
+  backButton: {
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  backButtonText: {
+    color: '#2D9A63',
+    fontSize: 16,
     fontWeight: '600',
   },
 });

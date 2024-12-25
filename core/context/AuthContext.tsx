@@ -1,14 +1,25 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { API_URL } from '@/src/config';
+
+const USER_KEY = '@user_data';
+
 interface UserData {
   id: string;
   fullName: string;
   phone: string;
   address: string;
-  userType: 'CUSTOMER' | 'RESTAURANT';
+  userType: 'CUSTOMER' | 'RESTAURANT' | 'COURIER';
+  vehicleInfo?: string;
   lastActive?: number;
+}
+
+interface LoginData {
+  fullName: string;
+  phone: string;
+  address: string;
+  userType: 'CUSTOMER' | 'RESTAURANT' | 'COURIER';
+  vehicleInfo?: string;
 }
 
 interface AuthContextType {
@@ -18,24 +29,13 @@ interface AuthContextType {
   logout: () => Promise<void>;
 }
 
-interface LoginData {
-  fullName: string;
-  phone: string;
-  address: string;
-  userType: 'CUSTOMER' | 'RESTAURANT';
-}
-
-const USER_KEY = '@user_data';
-
-// Create the context
 const AuthContext = createContext<AuthContextType>({
   user: null,
   isLoading: true,
   login: async () => {},
-  logout: async () => {}
+  logout: async () => {},
 });
 
-// Custom hook to use the auth context
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {
@@ -49,58 +49,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
 
+  useEffect(() => {
+    const loadUser = async () => {
+      try {
+        const userData = await AsyncStorage.getItem(USER_KEY);
+        if (userData) {
+          const parsedUser = JSON.parse(userData);
+          setUser(parsedUser);
+        }
+      } catch (error) {
+        console.error('Error loading user:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadUser();
+  }, []);
+
   const login = async (data: LoginData) => {
     try {
-      console.log("AuthContext: Creating user with data:", data);
-      
-      // Clear previous data
-      await AsyncStorage.clear();
-  
-      // Create user data
       const userData: UserData = {
         id: Math.random().toString(36).substring(2),
         fullName: data.fullName.trim(),
         phone: data.phone.trim(),
         address: data.address.trim(),
         userType: data.userType,
+        vehicleInfo: data.vehicleInfo?.trim(),
         lastActive: Date.now()
       };
-  
-      console.log("AuthContext: Generated user data:", userData);
-  
-      // Save to storage
+
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(userData));
-      
-      // Update state
       setUser(userData);
-  
-      // After setting user, create restaurant if needed
-      if (data.userType === 'RESTAURANT') {
-        console.log("AuthContext: Creating restaurant profile");
-        try {
-          const formData = new FormData();
-          formData.append('id', userData.id);
-          formData.append('name', userData.fullName);
-          formData.append('isActive', 'false');
-  
-          const response = await fetch(`${API_URL}/restaurants`, {
-            method: 'POST',
-            body: formData
-          });
-  
-          console.log("AuthContext: Restaurant creation response:", response.status);
-          
-          if (!response.ok) {
-            throw new Error('Failed to create restaurant profile');
-          }
-        } catch (error) {
-          console.error("AuthContext: Restaurant creation error:", error);
-          // Don't throw error here, let the login complete
-        }
+
+      // Simple routing based on user type
+      if (userData.userType === 'COURIER') {
+        router.push('/(courier)/courier_panel');
+      } else {
+        router.push('/(auth)/home');
       }
-  
-      // Navigate to home
-      router.replace('/(auth)/home');
+
     } catch (error) {
       console.error('Login error:', error);
       throw new Error('Failed to login');
@@ -109,7 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     try {
-      await AsyncStorage.clear();
+      await AsyncStorage.removeItem(USER_KEY);
       setUser(null);
       router.replace('/');
     } catch (error) {
@@ -117,24 +105,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Failed to logout');
     }
   };
-
-  // Load user on app start
-  useEffect(() => {
-    const loadUser = async () => {
-      try {
-        const userData = await AsyncStorage.getItem(USER_KEY);
-        if (userData) {
-          setUser(JSON.parse(userData));
-        }
-      } catch (error) {
-        console.error('Load user error:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadUser();
-  }, []);
 
   return (
     <AuthContext.Provider value={{ user, isLoading, login, logout }}>

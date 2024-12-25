@@ -1,4 +1,3 @@
-
 import { Stack } from 'expo-router';
 import { useAuth } from '@/core/context/AuthContext';
 import { useRouter, usePathname } from 'expo-router';
@@ -6,27 +5,16 @@ import { Feather } from '@expo/vector-icons';
 import { View, TouchableOpacity, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useState, useEffect } from 'react';
 
-// Custom TabBar component
-const TabBar = ({ userType, currentRoute, navigation }: { 
-  userType: 'CUSTOMER' | 'RESTAURANT', 
+// Custom TabBar for courier
+const TabBar = ({ currentRoute, navigation }: { 
   currentRoute: string,
   navigation: any 
 }) => {
-  const getCustomerTabs = () => [
-    { name: 'home', label: 'Home', icon: 'home' },
-    { name: 'cart', label: 'Cart', icon: 'shopping-cart' },
-    { name: 'orders', label: 'Orders', icon: 'shopping-bag' },
+  const tabs = [
+    { name: 'courier_panel', label: 'Available', icon: 'list' },
+    { name: 'active_orders', label: 'Active', icon: 'navigation' },
     { name: 'profile', label: 'Profile', icon: 'user' }
   ];
-
-  const getRestaurantTabs = () => [
-    { name: 'home', label: 'Home', icon: 'home' },
-    { name: 'rest_panel', label: 'Panel', icon: 'layout' },
-    { name: 'menu_management', label: 'Menu', icon: 'menu' },
-    { name: 'profile', label: 'Profile', icon: 'user' }
-  ];
-
-  const tabs = userType === 'CUSTOMER' ? getCustomerTabs() : getRestaurantTabs();
 
   return (
     <View style={styles.tabBar}>
@@ -55,7 +43,7 @@ const TabBar = ({ userType, currentRoute, navigation }: {
   );
 };
 
-export default function AuthLayout() {
+export default function CourierLayout() {
   const { user } = useAuth();
   const router = useRouter();
   const currentRoute = usePathname();
@@ -72,18 +60,18 @@ export default function AuthLayout() {
       setError(null);
 
       if (!user) {
-        router.replace('/login');
+        router.replace('/courier-login');
         return;
       }
 
-      if (user.userType !== 'CUSTOMER' && user.userType !== 'RESTAURANT') {
+      if (user.userType !== 'COURIER') {
         setError('Invalid user type');
-        router.replace('/login');
+        router.replace('/courier-login');
         return;
       }
     } catch (err) {
       setError('Authentication error occurred');
-      router.replace('/login');
+      router.replace('/courier-login');
     } finally {
       setIsLoading(false);
     }
@@ -103,7 +91,7 @@ export default function AuthLayout() {
         <Text style={styles.errorText}>{error}</Text>
         <Text 
           style={styles.loginText}
-          onPress={() => router.replace('/login')}
+          onPress={() => router.replace('/courier-login')}
         >
           Return to Login
         </Text>
@@ -120,17 +108,11 @@ export default function AuthLayout() {
           headerShown: false,
         }}
       >
-        <Stack.Screen name="home" />
-        <Stack.Screen name="cart" />
-        <Stack.Screen name="orders" />
+        <Stack.Screen name="courier_panel" />
+        <Stack.Screen name="active_orders" />
         <Stack.Screen name="profile" />
-        <Stack.Screen name="rest_panel" />
-        <Stack.Screen name="menu_management" />
-        <Stack.Screen name="restaurant" />
-        <Stack.Screen name="checkout" /> 
       </Stack>
       <TabBar 
-        userType={user.userType} 
         currentRoute={currentRoute.split('/')[1]} 
         navigation={router}
       />
